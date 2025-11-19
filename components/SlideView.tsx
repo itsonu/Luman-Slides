@@ -6,18 +6,21 @@ interface SlideViewProps {
   slide: Slide;
   onGenerateMedia: (id: string, type: 'image' | 'video') => void;
   onUpdateSlide: (id: string, updates: Partial<Slide>) => void;
+  onCommitEdit: () => void; // Called when a text edit is finished (blur)
 }
 
 // Helper Component for Auto-Resizing Textareas
 const AutoResizeTextarea = ({ 
   value, 
   onChange, 
+  onBlur,
   className, 
   placeholder, 
   minHeight 
 }: { 
   value: string;
   onChange: (val: string) => void;
+  onBlur?: () => void;
   className?: string;
   placeholder?: string;
   minHeight?: string;
@@ -45,6 +48,7 @@ const AutoResizeTextarea = ({
       ref={textareaRef}
       value={value}
       onChange={(e) => onChange(e.target.value)}
+      onBlur={onBlur}
       placeholder={placeholder}
       rows={1}
       className={`w-full bg-transparent border border-transparent hover:border-white/20 focus:border-brand-500/50 focus:bg-slate-900/50 rounded px-2 py-1 outline-none resize-none overflow-hidden transition-all ${className}`}
@@ -53,7 +57,7 @@ const AutoResizeTextarea = ({
   );
 };
 
-const SlideView: React.FC<SlideViewProps> = ({ slide, onGenerateMedia, onUpdateSlide }) => {
+const SlideView: React.FC<SlideViewProps> = ({ slide, onGenerateMedia, onUpdateSlide, onCommitEdit }) => {
   
   const updateContentItem = (index: number, newVal: string) => {
     const newContent = [...slide.content];
@@ -99,7 +103,10 @@ const SlideView: React.FC<SlideViewProps> = ({ slide, onGenerateMedia, onUpdateS
              {/* Overlay Controls for Media */}
              <div className="absolute inset-0 bg-slate-950/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-4 backdrop-blur-sm z-10">
                  <button 
-                    onClick={() => onUpdateSlide(slide.id, { mediaUrl: undefined, mediaType: MediaType.None })}
+                    onClick={() => {
+                        onUpdateSlide(slide.id, { mediaUrl: undefined, mediaType: MediaType.None });
+                        onCommitEdit();
+                    }}
                     className="flex items-center gap-2 px-4 py-2 bg-red-500/20 hover:bg-red-500/40 text-red-200 rounded-lg border border-red-500/30 transition-all"
                  >
                      <X className="w-4 h-4" /> Remove
@@ -128,6 +135,7 @@ const SlideView: React.FC<SlideViewProps> = ({ slide, onGenerateMedia, onUpdateS
                 <textarea
                     value={slide.imagePrompt}
                     onChange={(e) => onUpdateSlide(slide.id, { imagePrompt: e.target.value })}
+                    onBlur={onCommitEdit}
                     className="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-sm text-slate-300 placeholder-slate-600 focus:border-brand-500 focus:ring-1 focus:ring-brand-500/50 outline-none resize-none transition-all hover:bg-slate-900"
                     rows={3}
                     placeholder="Describe the image you want..."
@@ -161,6 +169,7 @@ const SlideView: React.FC<SlideViewProps> = ({ slide, onGenerateMedia, onUpdateS
         <AutoResizeTextarea
             value={slide.title}
             onChange={(val) => onUpdateSlide(slide.id, { title: val })}
+            onBlur={onCommitEdit}
             className="text-4xl md:text-5xl font-serif font-bold text-white mb-4 leading-tight drop-shadow-sm -ml-2"
             placeholder="Slide Title"
         />
@@ -169,6 +178,7 @@ const SlideView: React.FC<SlideViewProps> = ({ slide, onGenerateMedia, onUpdateS
                  <AutoResizeTextarea
                     value={slide.subtitle}
                     onChange={(val) => onUpdateSlide(slide.id, { subtitle: val })}
+                    onBlur={onCommitEdit}
                     className="text-xl text-brand-100 font-light tracking-wide -ml-2"
                     placeholder="Subtitle"
                 />
@@ -182,6 +192,7 @@ const SlideView: React.FC<SlideViewProps> = ({ slide, onGenerateMedia, onUpdateS
             <AutoResizeTextarea
                 value={point}
                 onChange={(val) => updateContentItem(idx, val)}
+                onBlur={onCommitEdit}
                 className="text-slate-200 -ml-2 flex-1"
             />
           </li>
@@ -212,6 +223,7 @@ const SlideView: React.FC<SlideViewProps> = ({ slide, onGenerateMedia, onUpdateS
             <AutoResizeTextarea
                 value={slide.title}
                 onChange={(val) => onUpdateSlide(slide.id, { title: val })}
+                onBlur={onCommitEdit}
                 className="text-6xl md:text-7xl font-serif font-bold text-white mb-6 drop-shadow-2xl text-center placeholder-slate-600"
                 placeholder="Presentation Title"
             />
@@ -225,6 +237,7 @@ const SlideView: React.FC<SlideViewProps> = ({ slide, onGenerateMedia, onUpdateS
                         updateContentItem(0, val);
                      }
                 }}
+                onBlur={onCommitEdit}
                 className="text-2xl text-slate-300 font-light max-w-2xl mx-auto mb-12 text-center placeholder-slate-600"
                 placeholder="Subtitle or Description"
             />
@@ -282,6 +295,7 @@ const SlideView: React.FC<SlideViewProps> = ({ slide, onGenerateMedia, onUpdateS
                         <AutoResizeTextarea
                             value={slide.title}
                             onChange={(val) => onUpdateSlide(slide.id, { title: val })}
+                            onBlur={onCommitEdit}
                             className="text-4xl font-bold text-white mb-4 drop-shadow-md -ml-2"
                         />
                         <div className="flex flex-wrap gap-3">
@@ -290,6 +304,7 @@ const SlideView: React.FC<SlideViewProps> = ({ slide, onGenerateMedia, onUpdateS
                                     key={i}
                                     value={c}
                                     onChange={(val) => updateContentItem(i, val)}
+                                    onBlur={onCommitEdit}
                                     className="bg-brand-500/20 border border-brand-500/30 px-4 py-2 rounded-xl text-white/90 text-sm outline-none focus:bg-brand-500/40 transition-colors min-w-[150px]"
                                 />
                             ))}
@@ -306,6 +321,7 @@ const SlideView: React.FC<SlideViewProps> = ({ slide, onGenerateMedia, onUpdateS
                      <AutoResizeTextarea
                         value={slide.title}
                         onChange={(val) => onUpdateSlide(slide.id, { title: val })}
+                        onBlur={onCommitEdit}
                         className="text-4xl font-bold text-white -ml-2"
                     />
                 </div>
@@ -319,6 +335,7 @@ const SlideView: React.FC<SlideViewProps> = ({ slide, onGenerateMedia, onUpdateS
                                 <AutoResizeTextarea
                                     value={point}
                                     onChange={(val) => updateContentItem(idx, val)}
+                                    onBlur={onCommitEdit}
                                     className="text-lg text-slate-200 -ml-2 font-medium"
                                 />
                              </div>
@@ -342,4 +359,49 @@ const SlideView: React.FC<SlideViewProps> = ({ slide, onGenerateMedia, onUpdateS
             <AutoResizeTextarea
                 value={slide.title}
                 onChange={(val) => onUpdateSlide(slide.id, { title: val })}
-                className="text-5xl font-serif
+                onBlur={onCommitEdit}
+                className="text-5xl font-serif font-bold text-white mb-12 text-center"
+            />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-left w-full">
+                {slide.content.map((point, idx) => (
+                <div key={idx} className="bg-slate-900/50 border border-slate-800 p-6 rounded-xl hover:bg-slate-800 transition-colors group">
+                     <AutoResizeTextarea
+                        value={point}
+                        onChange={(val) => updateContentItem(idx, val)}
+                        onBlur={onCommitEdit}
+                        className="text-lg text-slate-300 -ml-2 group-hover:text-white transition-colors"
+                    />
+                </div>
+                ))}
+            </div>
+            
+            {/* If no media, show button to generate a background or illustrative element */}
+             {!slide.mediaUrl && (
+                <div className="mt-12 w-full max-w-md bg-slate-900/80 p-4 rounded-xl border border-slate-800 backdrop-blur-sm">
+                    <p className="text-xs text-slate-500 font-bold uppercase mb-2 text-left">Background Visual</p>
+                    <textarea
+                        value={slide.imagePrompt}
+                        onChange={(e) => onUpdateSlide(slide.id, { imagePrompt: e.target.value })}
+                        onBlur={onCommitEdit}
+                        className="w-full bg-black/30 text-xs text-slate-400 p-2 rounded mb-3 outline-none focus:ring-1 ring-brand-500"
+                        rows={2}
+                    />
+                    <div className="flex justify-center">
+                        <button
+                            onClick={() => onGenerateMedia(slide.id, 'image')}
+                            className="text-brand-400 hover:text-brand-300 text-sm flex items-center gap-2 transition-colors font-medium"
+                        >
+                            <Sparkles className="w-4 h-4" />
+                            Generate Background
+                        </button>
+                    </div>
+                </div>
+             )}
+             {slide.isLoadingMedia && <div className="mt-4 text-brand-400 text-sm animate-pulse">Generating assets...</div>}
+          </div>
+        </div>
+      );
+  }
+};
+
+export default SlideView;

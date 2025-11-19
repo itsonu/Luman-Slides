@@ -1,9 +1,11 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { Slide, GenerationStatus, MediaType, SlideLayout } from './types';
 import { generatePresentationStructure, generateSlideImage, generateSlideVideo, refineImagePrompt } from './services/gemini';
 import InputForm from './components/InputForm';
 import SlideView from './components/SlideView';
-import { Layout, Play, Download, ChevronLeft, ChevronRight, MoreVertical, Plus, Trash2, ArrowUp, ArrowDown, MonitorPlay, Image as ImageIcon } from 'lucide-react';
+import { Layout, Play, Download, ChevronLeft, ChevronRight, Plus, Trash2, ArrowUp, ArrowDown, RotateCcw, RotateCw, Save, FilePlus, CheckCircle2 } from 'lucide-react';
+
+const STORAGE_KEY = 'lumina-project-data';
 
 const App: React.FC = () => {
   const [slides, setSlides] = useState<Slide[]>([]);
@@ -11,13 +13,97 @@ const App: React.FC = () => {
   const [status, setStatus] = useState<GenerationStatus>('idle');
   const [presentationTitle, setPresentationTitle] = useState('');
   const [isFullScreen, setIsFullScreen] = useState(false);
+  
+  // History Management
+  const [history, setHistory] = useState<{slides: Slide[], title: string}[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [isRestoringHistory, setIsRestoringHistory] = useState(false);
 
+  // --- Persistence ---
+  useEffect(() => {
+    const savedData = localStorage.getItem(STORAGE_KEY);
+    if (savedData) {
+      try {
+        const { slides: savedSlides, title: savedTitle, status: savedStatus } = JSON.parse(savedData);
+        if (savedSlides && savedSlides.length > 0) {
+          setSlides(savedSlides);
+          setPresentationTitle(savedTitle);
+          setStatus('complete');
+          // Initialize history with loaded state
+          setHistory([{ slides: savedSlides, title: savedTitle }]);
+          setHistoryIndex(0);
+        }
+      } catch (e) {
+        console.error("Failed to load saved project", e);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (status === 'complete' && slides.length > 0) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        slides,
+        title: presentationTitle,
+        status
+      }));
+    }
+  }, [slides, presentationTitle, status]);
+
+  // --- History Logic ---
+  const pushToHistory = useCallback((newSlides: Slide[], newTitle: string) => {
+      setHistory(prev => {
+          const newHistory = prev.slice(0, historyIndex + 1);
+          newHistory.push({ slides: newSlides, title: newTitle });
+          // Keep history size manageable (e.g., max 30 steps)
+          if (newHistory.length > 30) newHistory.shift(); 
+          return newHistory;
+      });
+      setHistoryIndex(prev => {
+          const nextIndex = prev + 1;
+          // Adjust index if we shifted the array
+          return history.length > 30 ? 29 : nextIndex; 
+      });
+  }, [history, historyIndex]);
+
+  const undo = () => {
+    if (historyIndex > 0) {
+      setIsRestoringHistory(true);
+      const prevState = history[historyIndex - 1];
+      setSlides(prevState.slides);
+      setPresentationTitle(prevState.title);
+      setHistoryIndex(historyIndex - 1);
+      // Restore flag reset in useEffect or next tick
+      setTimeout(() => setIsRestoringHistory(false), 0);
+    }
+  };
+
+  const redo = () => {
+    if (historyIndex < history.length - 1) {
+      setIsRestoringHistory(true);
+      const nextState = history[historyIndex + 1];
+      setSlides(nextState.slides);
+      setPresentationTitle(nextState.title);
+      setHistoryIndex(historyIndex + 1);
+      setTimeout(() => setIsRestoringHistory(false), 0);
+    }
+  };
+
+  const deleteProject = () => {
+      if (window.confirm("Are you sure you want to delete this project? This cannot be undone.")) {
+          localStorage.removeItem(STORAGE_KEY);
+          setSlides([]);
+          setPresentationTitle('');
+          setStatus('idle');
+          setHistory([]);
+          setHistoryIndex(-1);
+      }
+  };
+
+  // --- Media Generation ---
   const generateMediaForSlide = useCallback(async (slideId: string, type: 'image' | 'video') => {
-    // Find the slide at the moment of click to get the *current* prompt (user may have edited it)
-    // We use a functional update to read the state without being stale, 
-    // but since we need to do async work with that data, we need to find it first.
-    // In this component structure, 'slides' dependency is acceptable for this action.
-    
+    // Snapshot before media generation
+    pushToHistory(slides, presentationTitle);
+
     const slide = slides.find(s => s.id === slideId);
     if (!slide) return;
 
@@ -26,9 +112,6 @@ const App: React.FC = () => {
     let mediaUrl: string | null = null;
 
     try {
-        // Only refine if the user hasn't manually edited it to be super short/custom, 
-        // OR if it is the initial generation. 
-        // For now, we will attempt refinement if it's short, otherwise trust the user's edit.
         let activePrompt = slide.imagePrompt;
         
         if (activePrompt.length < 100 && !activePrompt.includes(",")) {
@@ -46,18 +129,22 @@ const App: React.FC = () => {
         }
     } catch (e) {
         console.error(e);
-        // Reset to none on error so user can try again
         setSlides(prev => prev.map(s => s.id === slideId ? { ...s, isLoadingMedia: false, mediaType: MediaType.None } : s));
         alert("Media generation failed. Please try again.");
         return;
     }
 
-    setSlides(prev => prev.map(s => 
+    const updatedSlides = slides.map(s => 
       s.id === slideId 
         ? { ...s, isLoadingMedia: false, mediaUrl: mediaUrl || undefined, mediaType: mediaUrl ? (type === 'video' ? MediaType.Video : MediaType.Image) : MediaType.None } 
         : s
-    ));
-  }, [slides]);
+    );
+    
+    setSlides(updatedSlides);
+    pushToHistory(updatedSlides, presentationTitle); // Snapshot after success
+  }, [slides, presentationTitle, pushToHistory]);
+
+  // --- Generation & Editing ---
 
   const handleGenerateStructure = async (topic: string, rawText: string) => {
     setStatus('analyzing');
@@ -67,6 +154,10 @@ const App: React.FC = () => {
       setSlides(generatedSlides);
       setStatus('complete');
       
+      // Init History
+      setHistory([{ slides: generatedSlides, title: topic }]);
+      setHistoryIndex(0);
+      
       // Auto-generate title slide image
       if (generatedSlides.length > 0) {
          const firstSlide = generatedSlides[0];
@@ -75,7 +166,12 @@ const App: React.FC = () => {
          refineImagePrompt(firstSlide.imagePrompt, firstSlide.title).then(refinedPrompt => {
              generateSlideImage(refinedPrompt).then(url => {
                  if (url) {
-                     setSlides(prev => prev.map((s, i) => i === 0 ? { ...s, isLoadingMedia: false, mediaUrl: url, mediaType: MediaType.Image } : s));
+                     setSlides(prev => {
+                         const withImg = prev.map((s, i) => i === 0 ? { ...s, isLoadingMedia: false, mediaUrl: url, mediaType: MediaType.Image } : s);
+                         // We don't push to history here to avoid cluttering history with async auto-load, 
+                         // or we could if we want "undo auto-generation". Let's skip for now to keep history clean.
+                         return withImg;
+                     });
                  } else {
                      setSlides(prev => prev.map((s, i) => i === 0 ? { ...s, isLoadingMedia: false, mediaType: MediaType.None } : s));
                  }
@@ -89,8 +185,20 @@ const App: React.FC = () => {
     }
   };
 
+  // Called instantly on keystrokes to keep UI responsive
   const handleSlideUpdate = (id: string, updates: Partial<Slide>) => {
     setSlides(prev => prev.map(s => s.id === id ? { ...s, ...updates } : s));
+  };
+
+  // Called onBlur or when a major action finishes
+  const saveSnapshot = () => {
+      if (isRestoringHistory) return;
+      
+      // Check if state is actually different from last history state to avoid dupes
+      const lastState = history[historyIndex];
+      if (lastState && JSON.stringify(lastState.slides) === JSON.stringify(slides)) return;
+
+      pushToHistory(slides, presentationTitle);
   };
 
   const nextSlide = () => {
@@ -102,6 +210,7 @@ const App: React.FC = () => {
   };
 
   const addSlide = () => {
+    pushToHistory(slides, presentationTitle); // Save state before adding
     const newSlide: Slide = {
         id: `slide-${Date.now()}`,
         layout: SlideLayout.SplitRight,
@@ -114,6 +223,7 @@ const App: React.FC = () => {
     newSlides.splice(currentSlideIndex + 1, 0, newSlide);
     setSlides(newSlides);
     setCurrentSlideIndex(currentSlideIndex + 1);
+    pushToHistory(newSlides, presentationTitle); // Save state after adding
   };
 
   const deleteSlide = (index: number, e?: React.MouseEvent) => {
@@ -122,11 +232,13 @@ const App: React.FC = () => {
           alert("Presentation must have at least one slide.");
           return;
       }
+      pushToHistory(slides, presentationTitle); // Save state before delete
       const newSlides = slides.filter((_, i) => i !== index);
       setSlides(newSlides);
       if (currentSlideIndex >= index && currentSlideIndex > 0) {
           setCurrentSlideIndex(currentSlideIndex - 1);
       }
+      pushToHistory(newSlides, presentationTitle); // Save state after delete
   };
 
   const moveSlide = (fromIndex: number, direction: 'up' | 'down', e?: React.MouseEvent) => {
@@ -134,6 +246,7 @@ const App: React.FC = () => {
       if (direction === 'up' && fromIndex === 0) return;
       if (direction === 'down' && fromIndex === slides.length - 1) return;
 
+      pushToHistory(slides, presentationTitle); // Save state before move
       const toIndex = direction === 'up' ? fromIndex - 1 : fromIndex + 1;
       const newSlides = [...slides];
       const [movedSlide] = newSlides.splice(fromIndex, 1);
@@ -145,11 +258,18 @@ const App: React.FC = () => {
       } else if (currentSlideIndex === toIndex) {
           setCurrentSlideIndex(fromIndex);
       }
+      pushToHistory(newSlides, presentationTitle); // Save state after move
   };
 
   const changeLayout = (layout: SlideLayout) => {
       if (!slides[currentSlideIndex]) return;
-      handleSlideUpdate(slides[currentSlideIndex].id, { layout });
+      pushToHistory(slides, presentationTitle); // Save before
+      
+      // Update state immediately
+      const newSlides = slides.map(s => s.id === slides[currentSlideIndex].id ? { ...s, layout } : s);
+      setSlides(newSlides);
+      
+      pushToHistory(newSlides, presentationTitle); // Save after
   };
 
   // Early return for input view
@@ -165,7 +285,18 @@ const App: React.FC = () => {
       {/* Sidebar - Slide Management */}
       <div className="w-72 border-r border-slate-800 bg-slate-900/95 flex flex-col hidden md:flex z-30">
         <div className="p-4 border-b border-slate-800 bg-slate-900/50 backdrop-blur-sm">
-           <h3 className="font-bold text-brand-100 truncate">{presentationTitle}</h3>
+           <div className="flex items-center justify-between mb-2">
+               <h3 className="font-bold text-brand-100 truncate max-w-[180px]">{presentationTitle}</h3>
+               <div className="flex items-center gap-1">
+                   <button 
+                        onClick={deleteProject}
+                        className="p-1.5 hover:bg-red-900/30 rounded text-slate-400 hover:text-red-400 transition-colors" 
+                        title="New Project (Delete Current)"
+                    >
+                        <FilePlus className="w-4 h-4" />
+                    </button>
+               </div>
+           </div>
            <div className="flex items-center justify-between mt-2">
                 <p className="text-xs text-slate-500">{slides.length} Slides</p>
                 <button onClick={addSlide} className="p-1 hover:bg-slate-800 rounded text-brand-400 hover:text-brand-300 transition-colors" title="Add Slide">
@@ -230,6 +361,29 @@ const App: React.FC = () => {
         {/* Toolbar */}
         <div className="h-14 border-b border-slate-800 bg-slate-900/80 flex items-center justify-between px-4 z-20 backdrop-blur-md shadow-sm">
           <div className="flex items-center gap-4">
+            <div className="flex items-center gap-1 mr-4">
+                <button 
+                    onClick={undo} 
+                    disabled={historyIndex <= 0}
+                    className="p-2 hover:bg-slate-800 rounded-md text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+                    title="Undo"
+                >
+                    <RotateCcw className="w-4 h-4" />
+                </button>
+                <button 
+                    onClick={redo} 
+                    disabled={historyIndex >= history.length - 1}
+                    className="p-2 hover:bg-slate-800 rounded-md text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+                    title="Redo"
+                >
+                    <RotateCw className="w-4 h-4" />
+                </button>
+                <div className="text-xs text-slate-600 flex items-center gap-1 ml-2 select-none">
+                    <CheckCircle2 className="w-3 h-3 text-green-900" />
+                    <span className="hidden lg:inline">Saved locally</span>
+                </div>
+            </div>
+            
             <button className="p-2 hover:bg-slate-800 rounded-md text-slate-400 hover:text-white md:hidden">
                <Layout className="w-5 h-5" />
             </button>
@@ -289,6 +443,7 @@ const App: React.FC = () => {
                     slide={currentSlide} 
                     onGenerateMedia={generateMediaForSlide}
                     onUpdateSlide={handleSlideUpdate}
+                    onCommitEdit={saveSnapshot}
                  />
                )}
             </div>
